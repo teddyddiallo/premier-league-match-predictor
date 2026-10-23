@@ -45,9 +45,11 @@ outcomes <- matches %>%
 kable(outcomes, caption = "Match outcomes, 2015-16 to 2024-25 (3,800 matches)")
 ```
 
+
 ```{r season-plot, out.width="85%"}
-include_graphics("results/home_win_rate_by_season.png")
+include_graphics(normalizePath("results/home_win_rate_by_season.png"))
 ```
+
 
 The home win rate fluctuates between 37.9% (2020-21) and 49.2% (2016-17) around an overall average of 44.5%, with no clear trend. With 380 matches per season, the standard error is about 2.5 percentage points, so most of these differences are compatible with chance. The 2020-21 season, played largely without spectators, shows the lowest home win rate (37.9%) and the highest away win rate (40.3%), which is consistent with a reduced home advantage.
 
@@ -125,7 +127,7 @@ kable(auc_tbl, caption = "ROC-AUC on the test set")
 ```
 
 ```{r roc-plot, out.width="75%"}
-include_graphics("results/roc_curves.png")
+include_graphics(normalizePath("results/roc_curves.png"))
 ```
 
 Both ROC curves lie above the diagonal (chance level), and the logistic regression curve lies above the random forest curve over almost the whole range of thresholds, in line with the AUC values. For instance, at a false positive rate of 0.50, the logistic regression identifies about 73% of home wins against about 61% for the random forest (values read from the plot). Both curves remain fairly close to the diagonal, confirming a modest discriminating power, and the random forest curve nearly merges with the diagonal at high false positive rates, where its ranking adds little.
@@ -143,7 +145,7 @@ gini <- setNames(round(imp$MeanDecreaseGini), imp$feature)
 ```
 
 ```{r importance-plot, out.width="75%"}
-include_graphics("results/rf_importance.png")
+include_graphics(normalizePath("results/rf_importance.png"))
 ```
 
 The random forest relies mostly on the two goal-difference features, `r top2[1]` and `r top2[2]` (mean decrease in Gini impurity of `r gini[top2[1]]` and `r gini[top2[2]]`), well ahead of the two points-based features (around 250 each). This agrees with the logistic regression, where only the goal-difference features were individually significant. Gini importance reflects how much a variable is used to split the training data; it says nothing about the direction of an effect or about test performance.
