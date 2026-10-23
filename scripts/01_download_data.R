@@ -34,9 +34,10 @@ matches <- seasons %>%
   bind_rows() %>%
   filter(FTR %in% c("H", "D", "A")) %>%
   mutate(
-    Date = dmy(Date),
-    FTHG = as.integer(FTHG),
-    FTAG = as.integer(FTAG)
+    Date   = dmy(Date),
+    FTHG   = as.integer(FTHG),
+    FTAG   = as.integer(FTAG),
+    Season = paste0("20", substr(Season, 1, 2), "-", substr(Season, 3, 4))
   ) %>%
   arrange(Date)
 
