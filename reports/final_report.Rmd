@@ -1,0 +1,166 @@
+---
+title: "Football Match Predictor: Can Recent Form Predict Home Wins in the Premier League?"
+author: "DIALLO Teddy Dorcas"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, fig.align = "center")
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+library(tidyverse)
+library(knitr)
+library(pROC)
+library(randomForest)
+```
+
+# Summary
+
+This project asks whether the recent form of two teams, measured only with information available before kick-off, can predict a home win in the English Premier League.
+
+- **Data:** 3,800 Premier League matches (seasons 2015-16 to 2024-25) from football-data.co.uk. Home teams won 44.5% of them.
+- **Features:** for each team, average points and average goal difference over its previous five matches (3,620 matches with a full history, no data leakage).
+- **Design:** chronological split, with 2,889 matches for training (2015-16 to 2022-23) and 731 for testing (2023-24 and 2024-25). A model that always predicts "no home win" reaches 56.1% accuracy on the test set.
+- **Results:** the logistic regression reaches 61.1% accuracy (exact binomial test against the baseline, p = 0.003) and a ROC-AUC of 0.657 (95% CI 0.618-0.697). The random forest reaches 59.4% accuracy and an AUC of 0.593 (95% CI 0.552-0.635); the difference between the two AUCs is significant (DeLong p = 0.0015).
+- **Takeaway:** recent form carries real but modest predictive information. The simpler model performs better than the more flexible one.
+
+# Data
+
+```{r data}
+matches    <- read_csv("data/processed/matches.csv", show_col_types = FALSE)
+model_data <- read_csv("data/processed/model_data.csv", show_col_types = FALSE)
+train      <- readRDS("data/processed/train.rds")
+test_pred  <- readRDS("data/processed/test_pred.rds")
+models     <- readRDS("results/models.rds")
+res        <- read_csv("results/model_evaluation.csv", show_col_types = FALSE)
+
+outcomes <- matches %>%
+  count(FTR) %>%
+  mutate(Outcome = recode(FTR, H = "Home win", D = "Draw", A = "Away win"),
+         Share   = paste0(round(100 * n / sum(n), 1), "%")) %>%
+  select(Outcome, Matches = n, Share)
+kable(outcomes, caption = "Match outcomes, 2015-16 to 2024-25 (3,800 matches)")
+```
+
+```{r season-plot, out.width="85%"}
+include_graphics("results/home_win_rate_by_season.png")
+```
+
+The home win rate fluctuates between 37.9% (2020-21) and 49.2% (2016-17) around an overall average of 44.5%, with no clear trend. With 380 matches per season, the standard error is about 2.5 percentage points, so most of these differences are compatible with chance. The 2020-21 season, played largely without spectators, shows the lowest home win rate (37.9%) and the highest away win rate (40.3%), which is consistent with a reduced home advantage.
+
+# Methods
+
+## Target and baseline
+
+The target is `HomeWin` (home win versus draw or away win). Home wins represent 44.9% of training matches and 43.9% of test matches, so the majority class is "no home win". A model that always predicts it reaches 56.1% accuracy on the test set, which is the benchmark any classifier must beat.
+
+## Feature engineering
+
+For each match, four pre-match features were computed from the previous five matches of each team: average points per match and average goal difference, for the home team and for the away team. Form carries over across seasons, and matches for which the previous five games span more than 300 days (promoted teams, returns after relegation) were dropped. This leaves 3,620 of 3,800 matches. Two checks confirmed the absence of leakage: the form at a team's sixth match equals the mean of its first five, and the form is missing at the fifth match. As a sanity check, the home team won 54.7% of matches when its recent form was better than the opponent's, against 36.8% otherwise.
+
+## Train/test split
+
+Matches were split chronologically: seasons 2015-16 to 2022-23 (2,889 matches) for training and 2023-24 to 2024-25 (731 matches) for testing, so that models are always evaluated on matches that happened after those used for training.
+
+## Models and evaluation
+
+A logistic regression and a random forest (500 trees, default settings, seed 42) were fitted on the training set only. On the test set, models were evaluated with accuracy (exact binomial test against the baseline), precision, recall, F1 and ROC-AUC with DeLong confidence intervals. Two decision thresholds were used, both chosen without looking at the test set: 0.5 (primary analysis) and the training home win rate of 44.9% (sensitivity analysis).
+
+# Results
+
+## Training diagnostics
+
+```{r or-table}
+lr <- models$logistic
+or_tbl <- exp(cbind(OR = coef(lr), confint.default(lr)))[-1, ] %>%
+  as.data.frame() %>%
+  rownames_to_column("Variable") %>%
+  mutate(across(where(is.numeric), ~ round(.x, 3)))
+kable(or_tbl, caption = "Logistic regression: odds ratios with 95% Wald confidence intervals")
+```
+
+The logistic regression is significantly better than an intercept-only model (deviance reduced from 3,975.2 to 3,734.5, i.e. by 240.7 on 4 degrees of freedom, p < 0.001). Only the goal-difference features are individually significant: one additional goal of average goal difference over the last five matches multiplies the odds of a home win by 1.44 for the home team (95% CI 1.22-1.71) and by 0.61 for the away team (95% CI 0.51-0.72). The points-based features are not individually significant (odds ratios 1.03 and 1.08, intervals including 1), which reflects their strong correlation with goal difference rather than an absence of information, so they should not be interpreted in isolation.
+
+The random forest reaches an out-of-bag accuracy of 56.2% on the training set, only about one point above the training majority-class baseline of 55.1%.
+
+## Performance on the test set
+
+```{r eval-table}
+res %>%
+  transmute(Model = model,
+            Threshold = threshold,
+            `Accuracy (%)`  = round(100 * accuracy, 1),
+            `Precision (%)` = round(100 * precision, 1),
+            `Recall (%)`    = round(100 * recall, 1),
+            F1 = round(f1, 3),
+            TP, FP, FN, TN,
+            `p vs baseline` = signif(p_vs_baseline, 2)) %>%
+  kable(caption = "Test set (731 matches); baseline accuracy = 56.1%")
+```
+
+**Accuracy against the baseline.** At the default threshold of 0.5, the logistic regression correctly classifies 447 of 731 test matches (61.1%), about 5 percentage points above the 56.1% baseline (exact binomial test, p = 0.003). The random forest reaches 59.4% (p = 0.04). Because four model-threshold combinations were tested, a Bonferroni-adjusted level of 0.0125 leaves only the two logistic regression results significant.
+
+**Effect of the threshold.** Lowering the threshold to the training home win rate (44.9%) makes the model predict home wins more often: recall rises from 47.0% to 60.4% for a stable precision of about 57%, and F1 from 0.515 to 0.583, while accuracy changes little (61.1% to 62.1%). Both thresholds were evaluated on the same matches, so the differences between them should not be over-interpreted.
+
+**What the model can and cannot do.** At the 0.5 threshold, the logistic regression predicts a home win for 265 of 731 matches (36%) and is right 57.0% of the time, against a home win share of 43.9% overall. It still misses 170 of the 321 actual home wins. Recent form therefore gives a measurable advantage over the naive baseline, but most of the uncertainty of a football match remains unexplained.
+
+## Ranking quality (ROC-AUC)
+
+```{r auc-table}
+actual <- test_pred$HomeWin
+roc_lr <- roc(actual, test_pred$p_lr, levels = c("No", "Yes"), direction = "<", quiet = TRUE)
+roc_rf <- roc(actual, test_pred$p_rf, levels = c("No", "Yes"), direction = "<", quiet = TRUE)
+ci_lr <- ci.auc(roc_lr)
+ci_rf <- ci.auc(roc_rf)
+auc_tbl <- tibble(
+  Model = c("Logistic regression", "Random forest"),
+  AUC = round(c(auc(roc_lr), auc(roc_rf)), 3),
+  `95% CI (DeLong)` = c(sprintf("%.3f - %.3f", ci_lr[1], ci_lr[3]),
+                        sprintf("%.3f - %.3f", ci_rf[1], ci_rf[3]))
+)
+kable(auc_tbl, caption = "ROC-AUC on the test set")
+```
+
+```{r roc-plot, out.width="75%"}
+include_graphics("results/roc_curves.png")
+```
+
+Both ROC curves lie above the diagonal (chance level), and the logistic regression curve lies above the random forest curve over almost the whole range of thresholds, in line with the AUC values. For instance, at a false positive rate of 0.50, the logistic regression identifies about 73% of home wins against about 61% for the random forest (values read from the plot). Both curves remain fairly close to the diagonal, confirming a modest discriminating power, and the random forest curve nearly merges with the diagonal at high false positive rates, where its ranking adds little.
+
+The logistic regression has an AUC of 0.657 (95% CI 0.618-0.697): a randomly chosen home-win match receives a higher predicted probability than a randomly chosen other match about 66% of the time. This is clearly above chance (0.5) but modest. The random forest has an AUC of 0.593 (95% CI 0.552-0.635). The difference of 0.064 between the two (95% CI 0.025-0.103) is significant (DeLong test, p = 0.0015). A plausible explanation, not tested here, is that with four strongly correlated features and about 2,900 training matches, the more flexible model fits noise; its hyperparameters were not tuned.
+
+## Variable importance
+
+```{r importance}
+imp <- as.data.frame(importance(models$random_forest)) %>%
+  rownames_to_column("feature") %>%
+  arrange(desc(MeanDecreaseGini))
+top2 <- imp$feature[1:2]
+gini <- setNames(round(imp$MeanDecreaseGini), imp$feature)
+```
+
+```{r importance-plot, out.width="75%"}
+include_graphics("results/rf_importance.png")
+```
+
+The random forest relies mostly on the two goal-difference features, `r top2[1]` and `r top2[2]` (mean decrease in Gini impurity of `r gini[top2[1]]` and `r gini[top2[2]]`), well ahead of the two points-based features (around 250 each). This agrees with the logistic regression, where only the goal-difference features were individually significant. Gini importance reflects how much a variable is used to split the training data; it says nothing about the direction of an effect or about test performance.
+
+# Limitations
+
+- **Only recent form is used.** Squad quality, injuries, rest days, Elo-type ratings or market values are not included. Bookmaker odds, which are available in the source files and summarise far more information, would be a much stronger benchmark; they were deliberately left out of this analysis.
+- **The target merges draws with away wins**, so the model does not predict draws.
+- **Small test set.** 731 matches give wide confidence intervals. Matches are not independent (the same teams appear repeatedly), so p-values and intervals are probably somewhat optimistic.
+- **Limited tuning and validation.** Model hyperparameters were not tuned and there is no rolling-origin cross-validation.
+- **One league, ten seasons**, including the unusual 2020-21 season played largely without spectators.
+- **Not a betting tool.** The results describe statistical association and modest predictive skill, not a profitable strategy.
+
+# Conclusion
+
+Over 3,620 Premier League matches, a logistic regression on the recent points and goal difference of both teams predicts home wins better than a naive baseline (61.1% against 56.1% accuracy, AUC 0.657), whereas a random forest on the same features does not do as well (AUC 0.593). The gain is real but modest, which is consistent with the large role of chance in football results.
+
+# Reproducibility
+
+Run the scripts in `scripts/` in numerical order (or `scripts/run_all.R`). Data come from football-data.co.uk.
